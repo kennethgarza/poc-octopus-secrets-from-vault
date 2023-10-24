@@ -1,0 +1,55 @@
+## use in conjunction with the octopus-project-test environment
+
+version: "3.8"
+services:  
+  sql_server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: Y
+      MSSQL_SA_PASSWORD: MyVeryStrongPassword123!
+    healthcheck:
+      test: [ "CMD", "/opt/mssql-tools/bin/sqlcmd", "-U", "sa", "-P", "MyVeryStrongPassword123!", "-Q", "select 1"]
+      interval: 10s
+      retries: 10
+    ports:
+      - 8433:1433
+      
+  octopus:
+    depends_on:
+      sql_server:
+        condition: service_healthy
+    image: octopusdeploy/octopusdeploy
+    environment:
+      ACCEPT_EULA: "Y"
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: "P@ssw0rd!"
+      ADMIN_API_KEY: API-L2GV2ELTCZDRANT1OQO045GPZHXFGWR
+      DB_CONNECTION_STRING: Server=sql_server;Database=octopus;User Id=sa;Password=MyVeryStrongPassword123!
+      MASTER_KEY: 6CpJSAjLOSMSvyHtgtx9OA==
+    ports:
+      - 8080:8080
+
+  vault:
+    image: hashicorp/vault
+    ports:
+      - 8200:8200
+    environment:      
+      VAULT_DEV_ROOT_TOKEN_ID: '00000000-0000-0000-0000-000000000000'
+      VAULT_TOKEN: '00000000-0000-0000-0000-000000000000'
+
+  dev_env:
+    depends_on:
+      sql_server:
+        condition: service_healthy
+      octopus:
+        condition: service_started
+    build:
+      context: .
+      dockerfile: terraform.dockerfile
+    command:
+      - sh 
+      - -c
+      - "cd /src/.devcontainer && terraform init && terraform apply -auto-approve && sleep infinity"
+    volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - ../:/src
