@@ -2,3 +2,4 @@
 .terraform
 .terraform.lock.hcl
 */**/terraform.tfs*
+terraform.tfs*
