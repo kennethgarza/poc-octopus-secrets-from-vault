@@ -8,15 +8,13 @@ locals {
 
     tenant_tags = [
         "FI-Hosted",
-        "Bank of Kenneth",
+        "BOK",
         "FI-Template"
     ]
-    
 }
 
 resource "octopusdeploy_environment" "envs" {
     for_each = toset(local.environments)
-
     name = each.value
 }
 

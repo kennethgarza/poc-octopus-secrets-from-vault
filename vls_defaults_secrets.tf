@@ -27,54 +27,64 @@ data "vault_kv_secret_v2" "secrets" {
 
 locals {
     secrets_values_decoded = {
-        for k,v in data.vault_kv_secret_v2.secrets: k => jsondecode(v.data_json)["value"]
+        for k,v in data.vault_kv_secret_v2.secrets: k => jsondecode(v.data_json)
     }
 
-    secrets_values_array = flatten([
-        for k,v in local.secrets_values_decoded : [
-            for vv in v : {
-                key = k,
-                value = vv.value
-                environments = lookup(lookup(vv, "scope", {}), "environments", [])
-                tenant_tags = lookup(lookup(vv, "scope", {}), "tenant_tags", [])
+    secrets_with_scope_pass_1 = flatten([
+        for k, v in local.secrets_values_decoded : [
+            for kk,vv in v : {
+                key = k
+                value = vv
+                envs = lower(kk) == "default" ? "none" : split(":", kk)[0]
+                tenant_tags = lower(kk) == "default" ? "none" : split(":", kk)[1]
             }
         ]
     ])
-
-    secrets_values_array_pass2 = [
-        for v in local.secrets_values_array : {
-            key = v.key,
-            index = lower(join(":", [
-                "arn",
-                "octopus_secrets",
-                v.key,
-                join("_", v.environments),
-                replace(join("_", v.tenant_tags), "/Tenant//", "")
-            ]))
-            value = v.value
-            environments = length(v.environments) > 0 ? [
-                for env in v.environments : local.envs[(lower(env))]
-            ] : null
-            tenant_tags = length(v.tenant_tags) > 0 ? v.tenant_tags : null
-            scope_index = (length(v.environments) + length(v.tenant_tags) > 0) ? [ 1 ] : [ ]
+    
+    secrets_with_scope_pass_2 = flatten([
+        for v in local.secrets_with_scope_pass_1 : {
+            key = v.key 
+            value = v.value,
+            envs = coalesce(v.envs, "none") == "none" ? null : split(",", v.envs)
+            tenant_tags = coalesce(v.tenant_tags, "none") == "none" ? null : split(",", v.tenant_tags)
         }
-    ]
-
-    secrets_values = {
-        for v in local.secrets_values_array_pass2 : v.index => v
+    ])
+    
+    secrets_with_scope_pass_3 = flatten([
+        for v in local.secrets_with_scope_pass_2 : {
+            key = v.key 
+            value = v.value 
+            index = replace(lower(join(":", [
+                "arn",
+                "octo",
+                "secrets",
+                v.key,
+                join("|", v.envs == null ? [] : v.envs),
+                replace(join("|", v.tenant_tags == null ? [] : v.tenant_tags), "///", "_")
+            ])), "/ /", "-")
+            envs = v.envs == null ? null : [
+                for e in v.envs : local.envs[e]
+            ]
+            tenant_tags =  v.tenant_tags
+            scope_index = (length(coalesce(v.envs, [])) + length(coalesce(v.tenant_tags, [])) > 0) ? [ 1 ] : [ ]
+        }
+    ])
+    
+    secrets_map = {
+        for v in local.secrets_with_scope_pass_3: v.index => v
     }
 }
 
 ## octopus secrets
 resource "octopusdeploy_library_variable_set" "secrets" {
-    name = "secrets"
+    name = "Secrets"
     description = "Imported secrets from Vault - Do not modify, these will be overwritten during the next sync"
 }
 
 resource "octopusdeploy_variable" "secrets" {
-    for_each = nonsensitive(local.secrets_values)
+    for_each = nonsensitive(local.secrets_map)
 
-    description = each.value.index
+    description = each.key
 
     owner_id = octopusdeploy_library_variable_set.secrets.id
     type = "Sensitive"
@@ -82,12 +92,14 @@ resource "octopusdeploy_variable" "secrets" {
     is_sensitive = true 
 
     name = each.value.key
+
     sensitive_value = each.value.value
+
     dynamic "scope" {
         for_each = each.value.scope_index
 
         content {
-            environments = each.value.environments
+            environments = each.value.envs
             tenant_tags = each.value.tenant_tags
         }
     }
